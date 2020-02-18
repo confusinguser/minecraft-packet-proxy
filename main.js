@@ -1,142 +1,157 @@
-
-// imports
 const mc = require('minecraft-protocol'); // to handle minecraft login session
 const webserver = require('./webserver.js'); // to serve the webserver
 const opn = require('opn'); //to open a browser window
+
 const secrets = require('./secrets.json'); // read the creds
 const config = require('./config.json'); // read the config
 
-webserver.createServer(config.ports.web); // create the webserver
+webserver.createServer(config.connectivity.ports.web); // create the webserver
 webserver.password = config.password
 webserver.onstart(() => { // set up actions for the webserver
-	startQueuing();
+	start();
 });
 webserver.onstop(() => {
 	stop();
 });
 
 if (config.openBrowserOnStart) {
-    opn('http://localhost:' + config.ports.web); //open a browser window
+    opn('http://localhost:' + config.connectivity.ports.web); //open a browser window
 }
 
-
-// lets
 let proxyClient; // a reference to the client that is the actual minecraft game
-let client; // the client to connect to 2b2t
+let client; // the client to connect to the server
 let server; // the minecraft server to pass packets
 
+let loginPacket = {};
+let posPacket = {};
+let chunkArray = new Array();
+
+// Prevent spam in console
+const packetNameBlacklist = ["map_chunk", "look", "position_look", "position", "unload_chunk", "player_info", "unlock_recipes", "advancements", "update_time", "keep_alive"];
+
 // function to disconnect from the server
-function stop(){
-	webserver.isInQueue = false;
-	webserver.queuePlace = "None";
-	webserver.ETA = "None";
-	client.end(); // disconnect
+function stop() {
+	webserver.connected = false;
 	if (proxyClient) {
-		proxyClient.end("Stopped the proxy."); // boot the player from the server
+		proxyClient.end("Stopped the proxy"); // boot the player from the server
 	}
+	client.end(); // disconnect
 	server.close(); // close the server
 }
 
 // function to start the whole thing
-function startQueuing() {
-	webserver.isInQueue = true;
-	client = mc.createClient({ // connect to 2b2t
-		host: "2b2t.org",
-		port: 25565,
+function start() {
+	webserver.connected = true;
+	client = mc.createClient({
+		host: config.connectivity.server.ip,
+		port: config.connectivity.server.port,
 		username: secrets.username,
 		password: secrets.password,
 		version: config.MCversion
 	});
-	let finishedQueue = false;
-	client.on("packet", (data, meta) => { // each time 2b2t sends a packet
-		if (!finishedQueue && meta.name === "playerlist_header") { // if the packet contains the player list, we can use it to see our place in the queue
-			let headermessage = JSON.parse(data.header);
-			let positioninqueue = headermessage.text.split("\n")[5].substring(25);
-			let ETA = headermessage.text.split("\n")[6].substring(27);
-			webserver.queuePlace = positioninqueue; // update info on the web page
-			webserver.ETA = ETA;
-			server.motd = `Place in queue: ${positioninqueue}`; // set the MOTD because why not
+
+	client.on("packet", (data, meta) => { // each time the server sends a packet
+		if (!proxyClient && !packetNameBlacklist.includes(meta.name)) {
+			console.log("(Server) " + meta.name + ": " + JSON.stringify(data) + "\n");
 		}
-		if (finishedQueue === false && meta.name === "chat") { // we can know if we're about to finish the queue by reading the chat message
-			// we need to know if we finished the queue otherwise we crash when we're done, because the queue info is no longer in packets the server sends us.
-			let chatMessage = JSON.parse(data.message);
-			if (chatMessage.text && chatMessage.text === "Connecting to the server...") {
-                if (webserver.restartQueue && proxyClient == null) { //if we have no client connected and we should restart
-                    stop();
-                    setTimeout(startQueuing, 100); // reconnect after 100 ms
-                } else {
-                    finishedQueue = true;
-                    webserver.queuePlace = "FINISHED";
-                    webserver.ETA = "NOW";  
-                }
-			}
+
+		if (meta.name == "login") {
+			loginPacket = data;
+		} else if (meta.name == "position") {
+			posPacket = data;
+		} else if (meta.name == "map_chunk") {
+			chunkArray.push(data);
 		}
 
 		if (proxyClient) { // if we are connected to the proxy, forward the packet we recieved to our game.
-			filterPacketAndSend(data, meta, proxyClient);
+			filterPacketAndSend(data, meta, proxyClient, false);
 		}
 	});
 
 	// set up actions in case we get disconnected.
 	client.on('end', () => {
 		if (proxyClient) {
-            proxyClient.end("Connection reset by 2b2t server.\nReconnecting...");
+            proxyClient.end("Connection reset by server.\nReconnecting...");
             proxyClient = null
 		}
 		stop();
-		// setTimeout(startQueuing, 100); // reconnect after 100 ms
 	});
 
 	client.on('error', (err) => {
 		if (proxyClient) {
-            proxyClient.end(`Connection error by 2b2t server.\n Error message: ${err}\nReconnecting...`);
+            proxyClient.end(`Connection error by server.\n Error message: ${err}\nReconnecting...`);
             proxyClient = null
 		}
 		console.log('err', err);
 		stop();
-		// setTimeout(startQueuing, 100); // reconnect after 100 ms
 	});
 
 	server = mc.createServer({ // create a server for us to connect to
 		'online-mode': false,
 		encryption: true,
 		host: '0.0.0.0',
-		port: config.ports.minecraft,
+		port: config.connectivity.ports.minecraft,
 		version: config.MCversion,
 		'max-players': maxPlayers = 1
 	});
 
 	server.on('login', (newProxyClient) => { // handle login
-		newProxyClient.write('login', {
-			entityId: newProxyClient.id,
-			levelType: 'default',
-			gameMode: 0,
-			dimension: 0,
-			difficulty: 2,
-			maxPlayers: server.maxPlayers,
-			reducedDebugInfo: false
-		});
-		newProxyClient.write('position', {
-			x: 0,
-			y: 1.62,
-			z: 0,
-			yaw: 0,
-			pitch: 0,
-			flags: 0x00
-		});
+		console.log("-------- Client Connected --------")
+		filterPacketAndSend(loginPacket, {"name": "login"}, newProxyClient, false);
+		filterPacketAndSend(posPacket, {"name": "position"}, newProxyClient, false);
+		chunkArray.forEach(function (v) {filterPacketAndSend(v, {"name":"map_chunk"}, newProxyClient, false)});
 
-		newProxyClient.on('packet', (data, meta) => { // redirect everything we do to 2b2t
-			filterPacketAndSend(data, meta, client);
-		});
+		newProxyClient.on('packet', (data, meta) => { // redirect everything we do to server
+			if (meta.name == "position") {
+				posPacket = data;
+			} else if (meta.name == "chat") {
+				let chatMessage = data.message;
+				if (chatMessage.startsWith("/receivepacket")) {
+					let args = chatMessage.split(" ");
+					if (args.length < 3) {
+						filterPacketAndSend({"message": "{\"text\":\"Usage: /receivepacket <packet name> <packet data>\"}", "position": 1}, {"name": "chat"}, proxyClient, false);
+					} else {
+						try {
+							filterPacketAndSend(JSON.parse(args[2]), {"name": args[1]}, proxyClient, false);
+						} catch {
+							filterPacketAndSend({"message": "{\"text\":\"Invalid JSON\"}", "position": 1}, {"name": "chat"}, proxyClient, true);
+						}
+					}
 
+				} else if (chatMessage.startsWith("/sendpacket")) {
+					let args = chatMessage.split(" ");
+					if (args.length < 3) {
+						filterPacketAndSend({"message": "{\"text\":\"Usage: /sendpacket <packet name> <packet data>\"}", "position": 1}, {"name": "chat"}, proxyClient, true);
+					} else {
+						try {
+							filterPacketAndSend(JSON.parse(args[2]), {"name": args[1]}, client, true);
+						} catch {
+							filterPacketAndSend({"message": "{\"text\":\"Invalid JSON\"}", "position": 1}, {"name": "chat"}, proxyClient, true);
+						}
+					}
+				} else {
+					filterPacketAndSend(data, meta, client, true);
+				}
+			} else {
+				filterPacketAndSend(data, meta, client, true);
+			}
+		});
 		proxyClient = newProxyClient;
 	});
 }
 
-//function to filter out some packets that would make us disconnect otherwise.
-//this is where you could filter out packets with sign data to prevent chunk bans.
-function filterPacketAndSend(data, meta, dest) {
-	if (meta.name !="keep_alive" && meta.name !="update_time") { //keep alive packets are handled by the client we created, so if we were to forward them, the minecraft client would respond too and the server would kick us for responding twice.
+
+function filterPacketAndSend(data, meta, dest, sentByClient) {
+	if (meta.name != "keep_alive" && meta.name != "update_time") { //keep alive packets are handled by the client we created, so if we were to forward them, the minecraft client would respond too and the server would kick us for responding twice.
 		dest.write(meta.name, data);
+		if (!packetNameBlacklist.includes(meta.name)) {
+			let prefix;
+			if (sentByClient) {
+				prefix = "(Client) ";
+			} else {
+				prefix = "(Server) ";
+			}
+			console.log(prefix + meta.name + ": " + JSON.stringify(data) + "\n");
+		}
 	}
 }

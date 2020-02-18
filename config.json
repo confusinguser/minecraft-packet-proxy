@@ -1,9 +1,15 @@
 {
-    "ports":{
-        "minecraft":25565,
-        "web":80
+    "connectivity": {
+        "ports": {
+            "minecraft": 25565,
+            "web": 80
+        },
+        "server": {
+            "port": 25566,
+            "ip": "127.0.0.1"
+        }
     },
-    "openBrowserOnStart": true,
-    "password":"",
-    "MCversion":"1.12.2"
+    "openBrowserOnStart": false,
+    "password": "",
+    "MCversion": "1.12.2"
 }
