@@ -10,17 +10,14 @@ This is a proxy server running on node.js that will display packets sent between
 2. Download this repository with the green button (top right of this page). If you downloaded it as zip, unzip it.
 3. Open a terminal and navigate to the folder you downloaded it
 4. Run `npm install`
-5. Make a secrets.json file. Fill it out like this:
+5. Make a secrets.json file. Fill it out like this: (Note that you must use your email adress and not your minecraft username)
 ```
 {
     "username":"<YOUR EMAIL>",
     "password":"<YOUR PASSWORD>"
 }
 ```
-Fill out your minecraft information in the file. Note that you must use your email adress and not your minecraft username.
 6. If you so wish, edit the configuration in config.json. (On Linux, all ports below 1024 \[including port 80\], require you to run the program with administrator rights.)
-7. For trust reasons, this tool does not update automatically. Check back here once in a while to see if there are any updates.
-
 
 # How to use
 1. Read the code to ensure i'm not stealing your credentials. i'm not, but you shouldn't take my word for it. If you don't know how to read it, downloading stuff off the internet and giving it your password is probably a bad idea anyway.
