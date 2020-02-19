@@ -1,7 +1,7 @@
 # Minecraft Packet Proxy
 This is a proxy server running on node.js that will display packets sent between the server and client
 
-# Features:
+# Features
 * In game commands to send and receive fake packets
 * Display data sent between the server and client in the console
 
